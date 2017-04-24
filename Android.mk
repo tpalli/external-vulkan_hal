@@ -33,8 +33,7 @@ LOCAL_CPPFLAGS := -std=c++1y \
 	-Wno-c99-extensions
 
 LOCAL_C_INCLUDES := \
-	frameworks/native/vulkan/include \
-	$(LOCAL_PATH)/../mesa/include
+	frameworks/native/vulkan/include
 
 LOCAL_SHARED_LIBRARIES := libvulkan liblog libdl libcutils libsync
 
