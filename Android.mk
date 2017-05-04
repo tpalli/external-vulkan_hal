@@ -21,7 +21,6 @@ LOCAL_SRC_FILES := \
 
 LOCAL_CLANG := true
 LOCAL_CFLAGS := -std=c99 -fvisibility=hidden -fstrict-aliasing \
-	-Weverything -Werror \
 	-Wno-padded \
 	-Wno-undef \
 	-Wno-zero-length-array \
@@ -33,7 +32,8 @@ LOCAL_CPPFLAGS := -std=c++1y \
 	-Wno-c99-extensions
 
 LOCAL_C_INCLUDES := \
-	frameworks/native/vulkan/include \
+	libhardware/include/hardware \
+	frameworks/native/vulkan/include/hardware \
 	$(LOCAL_PATH)/../mesa/include
 
 LOCAL_SHARED_LIBRARIES := libvulkan liblog libdl libcutils libsync

@@ -16,13 +16,12 @@
 
 #include <cutils/log.h>
 #include <hardware/hardware.h>
-#include <hardware/hwvulkan.h>
+#include <hwvulkan.h>
 #include <hardware/gralloc.h>
-#include <vulkan/vk_android_native_buffer.h>
+#include <../vulkan/vk_android_native_buffer.h>
 #include <sync/sync.h>
 
 #include "vulkan_wrapper.h"
-#include "vulkan/vulkan_intel.h"
 
 static VkResult GetSwapchainGrallocUsageANDROID(VkDevice /*dev*/,
                                                 VkFormat /*fmt*/,
@@ -71,11 +70,15 @@ static VkResult CreateImage(VkDevice device,
                             const VkImageCreateInfo* pCreateInfo,
                             const VkAllocationCallbacks* pAllocator,
                             VkImage* pImage) {
-  static PFN_vkCreateDmaBufImageINTEL dmabufFunc =
-      reinterpret_cast<PFN_vkCreateDmaBufImageINTEL>(
-          mesa_vulkan::vkGetDeviceProcAddr(device, "vkCreateDmaBufImageINTEL"));
 
-  if (!dmabufFunc || !pCreateInfo->pNext) {
+  VkResult r = VK_SUCCESS;
+
+  (void) device;
+  (void) pCreateInfo;
+  (void) pAllocator;
+  (void) pImage;
+
+  if (!pCreateInfo->pNext) {
     ALOGE("ANDROID extension structure not found");
     return VK_ERROR_EXTENSION_NOT_PRESENT;
   }
@@ -99,25 +102,84 @@ static VkResult CreateImage(VkDevice device,
   const native_handle_t* handle =
       reinterpret_cast<const native_handle_t*>(buffer->handle);
 
-  VkDeviceMemory pMem;
-  VkDmaBufImageCreateInfo dmabufInfo = {
-      .sType = static_cast<VkStructureType>(
-          VK_STRUCTURE_TYPE_DMA_BUF_IMAGE_CREATE_INFO_INTEL),
-      .pNext = NULL,
-      .fd = handle->data[0],
-      .format = pCreateInfo->format,
-      .extent = {
-          .width = pCreateInfo->extent.width,
-          .height = pCreateInfo->extent.height,
-          .depth = pCreateInfo->extent.depth,
-      },
-      // FIXME magic, we know this surface tiling to be I915_TILING_X and
-      // take this in to account when giving stride, Mesa will internally
-      // use this exact value as row pitch validation for the surface.
-      .strideInBytes = static_cast<uint32_t>(buffer->stride * 4),
+#if 0
+  // ATM there is no need to query import capability, we know
+  // we can. In some point we need to deal with format modifiers,
+  // then we probably need some of these functions around
+#define API(x) static PFN_##x x = reinterpret_cast<PFN_##x>(\
+  mesa_vulkan::vkGetDeviceProcAddr(device, #x)); \
+  if (!x) {\
+    ALOGE("required extension function " #x " was not found");\
+    return VK_ERROR_EXTENSION_NOT_PRESENT;\
+  }\
+
+  API(vkGetPhysicalDeviceProperties2KHR);
+  API(vkGetPhysicalDeviceImageFormatProperties2KHR);
+  API(vkGetPhysicalDeviceMemoryProperties2KHR);
+  API(vkGetMemoryFdPropertiesKHX);
+
+#undef API
+#endif
+
+  // import memory from dma buf
+  VkDeviceMemory mem;
+  uint32_t fd_size = buffer->stride * 4 * pCreateInfo->extent.height;
+
+  VkImportMemoryFdInfoKHX mem_info = {
+    .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHX,
+    .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHX,
+    .fd = handle->data[0],
   };
 
-  return dmabufFunc(device, &dmabufInfo, pAllocator, &pMem, pImage);
+  VkMemoryAllocateInfo alloc_info = {
+    .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+    .allocationSize = fd_size,
+    .memoryTypeIndex = 0,
+    .pNext = &mem_info,
+  };
+
+  r = vkAllocateMemory(device, &alloc_info, pAllocator, &mem);
+  if (r != VK_SUCCESS) {
+    ALOGE("vkAllocateMemory failed to import dma_buf");
+    return r;
+  }
+
+  // TODO - negotiate image modifiers via VK_MESAX_external_memory_dma_buf
+  // when we have the extension in place
+
+  // create image
+  VkImageCreateInfo image_create_info = {
+    .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+    .flags = 0,
+    .imageType = VK_IMAGE_TYPE_2D,
+    .format = pCreateInfo->format,
+    .extent = { pCreateInfo->extent.width, pCreateInfo->extent.height, 1 },
+    .mipLevels = 1,
+    .arrayLayers = 1,
+    .samples = VK_SAMPLE_COUNT_1_BIT,
+    .tiling = VK_IMAGE_TILING_OPTIMAL,
+    .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    .queueFamilyIndexCount = 1,
+    .pQueueFamilyIndices = (uint32_t[]) { 0 },
+    .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    .pNext = NULL,
+  };
+
+  r = vkCreateImage(device, &image_create_info, pAllocator, pImage);
+
+  if (r != VK_SUCCESS) {
+    ALOGE("failed to create image!");
+    return r;
+  }
+
+  // finally bind image with imported memory
+  r = vkBindImageMemory(device, *pImage, mem, 0);
+
+  if (r != VK_SUCCESS)
+    ALOGE("failed to bind image with imported memory");
+
+  return r;
 }
 
 static int CloseDevice(struct hw_device_t* dev) {
@@ -136,7 +198,7 @@ static VkResult EnumerateInstanceExtensionProperties(
 static PFN_vkVoidFunction GetDeviceProcAddr(VkDevice device, const char* name) {
   PFN_vkVoidFunction pfn;
 
-  /* wrap vkCreateImage to use vkCreateDmaBufImageINTEL */
+  /* wrap vkCreateImage to use VK_KHX_external_memory_fd */
   if (strcmp(name, "vkCreateImage") == 0) {
     return reinterpret_cast<PFN_vkVoidFunction>(CreateImage);
   }
