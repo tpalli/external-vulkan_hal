@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <stdlib.h>
 #include <cutils/log.h>
 #include <hardware/hardware.h>
 #include <hardware/hwvulkan.h>
@@ -23,6 +24,17 @@
 
 #include "vulkan_wrapper.h"
 #include "vulkan/vulkan_intel.h"
+
+
+static struct VkExtensionProperties hal_extensions[] = {
+  {
+    .extensionName = "VK_ANDROID_native_buffer",
+    .specVersion = 1
+  },
+};
+
+static struct VkExtensionProperties *driver_extensions = NULL;
+static unsigned driver_extension_count = 0;
 
 static VkResult GetSwapchainGrallocUsageANDROID(VkDevice /*dev*/,
                                                 VkFormat /*fmt*/,
@@ -158,9 +170,103 @@ static PFN_vkVoidFunction GetDeviceProcAddr(VkDevice device, const char* name) {
   return nullptr;
 }
 
+static VkResult EnumerateDeviceExtensionProperties(
+  VkPhysicalDevice physicalDevice,
+  const char *pLayerName,
+  uint32_t* pPropertyCount,
+  VkExtensionProperties* pProperties)
+{
+  bool inject = false;
+  if (pProperties != NULL)
+    inject = true;
+
+  VkResult res = mesa_vulkan::vkEnumerateDeviceExtensionProperties(
+    physicalDevice, pLayerName, pPropertyCount, pProperties);
+
+  if (res != VK_SUCCESS)
+    return res;
+
+  unsigned amount =
+    sizeof(hal_extensions) / sizeof(struct VkExtensionProperties);
+
+  *pPropertyCount += amount;
+
+  // not injecting extensions, just counting
+  if (!inject)
+    return res;
+
+  // first time init HACK
+  static bool init = false;
+  if (!init) {
+    init = true;
+
+    driver_extension_count = *pPropertyCount - amount;
+
+    driver_extensions = reinterpret_cast<struct VkExtensionProperties *>
+      (malloc(driver_extension_count * sizeof(struct VkExtensionProperties)));
+
+    memcpy(driver_extensions, pProperties, driver_extension_count * sizeof(struct VkExtensionProperties));
+  }
+
+#if 0
+  ALOGD("driver extensions");
+  ALOGD("------------------");
+  struct VkExtensionProperties *dst = pProperties;
+  for (unsigned i = 0; i < *pPropertyCount; i++, dst++) {
+    ALOGD("  %s", dst->extensionName);
+  }
+#endif
+
+  struct VkExtensionProperties *src = hal_extensions;
+  struct VkExtensionProperties *dst = pProperties;
+
+  dst += (*pPropertyCount - amount);
+
+  // modify the list, inject extensions implemented by HAL
+  for (unsigned i = 0; i < amount; i++, src++, dst++) {
+    strcpy(dst->extensionName, src->extensionName);
+    dst->specVersion = src->specVersion;
+  }
+
+#if 0
+  dst = pProperties;
+  ALOGD("result looks like");
+  ALOGD("------------------");
+  for (unsigned i = 0; i < *pPropertyCount; i++, dst++) {
+    ALOGD("  %s", dst->extensionName);
+  }
+#endif
+
+  return res;
+}
+
+static VkResult CreateDevice(
+  VkPhysicalDevice physicalDevice,
+  const VkDeviceCreateInfo* pCreateInfo,
+  const VkAllocationCallbacks* pAllocator,
+  VkDevice* pDevice)
+{
+  PFN_vkCreateDevice createDeviceFunc =
+    reinterpret_cast<PFN_vkCreateDevice>(
+      mesa_vulkan::vkGetInstanceProcAddr(NULL, "vkCreateDevice"));
+
+  ALOGD("attention, custom vkCreateDevice");
+
+  return createDeviceFunc(physicalDevice, pCreateInfo, pAllocator, pDevice);
+}
+
 static PFN_vkVoidFunction GetInstanceProcAddr(VkInstance instance,
                                               const char* name) {
   PFN_vkVoidFunction pfn;
+
+  if (strcmp(name, "vkEnumerateDeviceExtensionProperties") == 0) {
+    return reinterpret_cast<PFN_vkVoidFunction>(EnumerateDeviceExtensionProperties);
+  }
+
+  // need to wrap vkCreateDevice and inject driver extensions (instead of full
+  // list with HAL extensions to the list
+  if (strcmp(name, "vkCreateDevice") == 0)
+    return reinterpret_cast<PFN_vkVoidFunction>(CreateDevice);
 
   if (strcmp(name, "vkGetDeviceProcAddr") == 0)
     return reinterpret_cast<PFN_vkVoidFunction>(GetDeviceProcAddr);

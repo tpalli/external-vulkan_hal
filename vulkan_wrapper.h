@@ -29,6 +29,8 @@ extern PFN_vkGetDeviceProcAddr vkGetDeviceProcAddr;
 extern PFN_vkCreateInstance vkCreateInstance;
 extern PFN_vkEnumerateInstanceExtensionProperties
     vkEnumerateInstanceExtensionProperties;
+extern PFN_vkEnumerateDeviceExtensionProperties
+  vkEnumerateDeviceExtensionProperties;
 }
 
 #endif

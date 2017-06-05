@@ -59,6 +59,10 @@ bool InitializeVulkan() {
     return false;
   }
 
+  vkEnumerateDeviceExtensionProperties =
+      reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
+          vkGetInstanceProcAddr(NULL, "vkEnumerateDeviceExtensionProperties"));
+
   vkGetDeviceProcAddr = reinterpret_cast<PFN_vkGetDeviceProcAddr>(
       vkGetInstanceProcAddr(NULL, "vkGetDeviceProcAddr"));
 
@@ -75,6 +79,7 @@ void Close() {
     dlclose(LibraryHandle);
     LibraryHandle = NULL;
     vkEnumerateInstanceExtensionProperties = NULL;
+    vkEnumerateDeviceExtensionProperties = NULL;
     vkCreateInstance = NULL;
     vkGetInstanceProcAddr = NULL;
     vkGetDeviceProcAddr = NULL;
@@ -86,4 +91,6 @@ PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr;
 PFN_vkGetDeviceProcAddr vkGetDeviceProcAddr;
 PFN_vkEnumerateInstanceExtensionProperties
     vkEnumerateInstanceExtensionProperties;
+PFN_vkEnumerateDeviceExtensionProperties
+  vkEnumerateDeviceExtensionProperties;
 }
